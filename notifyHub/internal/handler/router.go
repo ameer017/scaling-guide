@@ -20,6 +20,7 @@ func NewRouter(notifications *NotificationHandler) http.Handler {
 		r.Post("/", notifications.Create)
 		r.Get("/", notifications.List)
 		r.Get("/{id}", notifications.Get)
+		r.Get("/{id}/logs", notifications.ListDeliveryLogs)
 	})
 
 	return r

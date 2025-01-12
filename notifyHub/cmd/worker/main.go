@@ -42,8 +42,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	repo := repository.NewNotificationRepository(pool)
-	svc := service.NewNotificationService(repo, nil, mailer)
+	producer := queue.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
+	defer func() {
+		if err := producer.Close(); err != nil {
+			log.Error("kafka producer close failed", "error", err)
+		}
+	}()
+
+	dlq := queue.NewProducer(cfg.KafkaBrokers, cfg.KafkaDLQTopic)
+	defer func() {
+		if err := dlq.Close(); err != nil {
+			log.Error("kafka dlq producer close failed", "error", err)
+		}
+	}()
+
+	svc := service.NewNotificationService(service.Deps{
+		Repo:        repository.NewNotificationRepository(pool),
+		Logs:        repository.NewDeliveryLogRepository(pool),
+		Producer:    producer,
+		DLQ:         dlq,
+		Mailer:      mailer,
+		MaxAttempts: cfg.MaxDeliveryAttempts,
+		BackoffBase: cfg.RetryBackoff,
+		Provider:    "gmail-smtp",
+	})
 
 	consumer := queue.NewConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, cfg.KafkaGroupID)
 	defer func() {
@@ -56,7 +78,10 @@ func main() {
 		"env", cfg.AppEnv,
 		"kafka_brokers", cfg.KafkaBrokers,
 		"kafka_topic", cfg.KafkaTopic,
+		"kafka_dlq_topic", cfg.KafkaDLQTopic,
 		"kafka_group_id", cfg.KafkaGroupID,
+		"max_attempts", cfg.MaxDeliveryAttempts,
+		"retry_backoff", cfg.RetryBackoff.String(),
 		"smtp_host", cfg.SMTPHost,
 		"smtp_from", firstNonEmpty(cfg.SMTPFrom, cfg.SMTPUsername),
 	)
@@ -79,30 +104,33 @@ func main() {
 			"offset", msg.Offset,
 		)
 
-		if err := svc.ProcessDelivery(ctx, payload.NotificationID); err != nil {
-			switch {
-			case errors.Is(err, service.ErrNotFound):
-				log.Warn("notification missing; committing offset to skip poison message",
-					"notification_id", payload.NotificationID,
-				)
-			case errors.Is(err, service.ErrDeliveryFailed):
-				// Marked FAILED in DB; commit so we don't loop forever (retries come in step 5).
-				log.Error("email delivery failed; marked FAILED",
-					"notification_id", payload.NotificationID,
-					"error", err,
-				)
-			default:
-				log.Error("process delivery failed; will not commit offset",
-					"notification_id", payload.NotificationID,
-					"error", err,
-				)
-				time.Sleep(time.Second)
-				continue
-			}
-		} else {
-			log.Info("notification emailed and marked SENT",
+		outcome, err := svc.ProcessDelivery(ctx, payload.NotificationID)
+		if err != nil && !errors.Is(err, service.ErrNotFound) &&
+			!errors.Is(err, service.ErrDeliveryFailed) &&
+			!errors.Is(err, service.ErrRetryScheduled) {
+			log.Error("process delivery failed; will not commit offset",
 				"notification_id", payload.NotificationID,
+				"error", err,
 			)
+			time.Sleep(time.Second)
+			continue
+		}
+
+		switch outcome {
+		case service.OutcomeSent:
+			log.Info("notification emailed and marked SENT", "notification_id", payload.NotificationID)
+		case service.OutcomeRetryScheduled:
+			log.Warn("delivery failed; retry scheduled",
+				"notification_id", payload.NotificationID,
+				"error", err,
+			)
+		case service.OutcomeFailedPermanent:
+			log.Error("delivery permanently failed; published to DLQ",
+				"notification_id", payload.NotificationID,
+				"error", err,
+			)
+		case service.OutcomeSkipped:
+			log.Info("notification already terminal; skipping", "notification_id", payload.NotificationID)
 		}
 
 		if err := consumer.Commit(ctx, msg); err != nil {

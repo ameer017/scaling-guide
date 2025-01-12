@@ -94,6 +94,7 @@ notifyHub/
 | -------- | --------------------- | -------------------------------------- |
 | `POST`   | `/notifications`      | Create / enqueue an email notification |
 | `GET`    | `/notifications/{id}` | Get one notification                   |
+| `GET`    | `/notifications/{id}/logs` | List delivery attempts            |
 | `GET`    | `/notifications`      | List notifications                     |
 | `DELETE` | `/notifications/{id}` | Cancel / delete a notification         |
 | `POST`   | `/templates`          | Create a template                      |
@@ -148,7 +149,15 @@ SMTP_PASSWORD=your-16-char-app-password
 SMTP_FROM=you@gmail.com
 ```
 
-The worker sends mail over SMTP with STARTTLS. Failed sends mark the notification `FAILED` (retries come in step 5).
+The worker sends mail over SMTP with STARTTLS.
+
+### Retries, delivery logs, and DLQ
+
+- Each send attempt is written to `delivery_logs` (`SUCCESS` / `FAILURE`).
+- Failed attempts retry with exponential backoff (`RETRY_BACKOFF_SECONDS`, default 2s → 2s, 4s, 8s…) up to `MAX_DELIVERY_ATTEMPTS` (default 3).
+- After retries are exhausted, status becomes `FAILED` and a message is published to `notifications.dlq`.
+- Inspect attempts: `GET /notifications/{id}/logs`
+- Inspect DLQ: `make kafka-dlq`
 
 ## Future Enhancements
 
@@ -157,7 +166,7 @@ The worker sends mail over SMTP with STARTTLS. Failed sends mark the notificatio
 - User notification preferences
 - Rate limiting per recipient
 - Batch notifications
-- Dead-letter topic (Kafka DLQ)
+- Dead-letter topic (Kafka DLQ) — **done** (`notifications.dlq`)
 - Multi-tenancy
 - Event sourcing
 - gRPC API

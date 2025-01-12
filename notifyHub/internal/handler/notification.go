@@ -64,6 +64,20 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (h *NotificationHandler) ListDeliveryLogs(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	items, err := h.svc.ListDeliveryLogs(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, service.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "notification not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 func Health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",

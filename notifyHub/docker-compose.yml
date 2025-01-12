@@ -83,7 +83,14 @@ services:
           --topic notifications.send \
           --partitions 3 \
           --replication-factor 1
-        echo "topic ready: notifications.send"
+        /opt/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka:19092 \
+          --create \
+          --if-not-exists \
+          --topic notifications.dlq \
+          --partitions 3 \
+          --replication-factor 1
+        echo "topics ready: notifications.send, notifications.dlq"
     restart: "no"
 
 volumes:

@@ -16,6 +16,14 @@ type SendMessage struct {
 	NotificationID string `json:"notification_id"`
 }
 
+// DLQMessage is published when a notification permanently fails or is poison.
+type DLQMessage struct {
+	NotificationID string `json:"notification_id"`
+	Reason         string `json:"reason"`
+	Attempt        int    `json:"attempt"`
+	FailedAt       string `json:"failed_at"`
+}
+
 type Producer struct {
 	writer *kafka.Writer
 	topic  string
@@ -35,6 +43,10 @@ func NewProducer(brokersCSV, topic string) *Producer {
 	}
 }
 
+func (p *Producer) Topic() string {
+	return p.topic
+}
+
 func (p *Producer) Publish(ctx context.Context, notificationID string) error {
 	payload, err := json.Marshal(SendMessage{NotificationID: notificationID})
 	if err != nil {
@@ -47,7 +59,27 @@ func (p *Producer) Publish(ctx context.Context, notificationID string) error {
 		Time:  time.Now().UTC(),
 	})
 	if err != nil {
-		return fmt.Errorf("publish to kafka: %w", err)
+		return fmt.Errorf("publish to kafka topic %s: %w", p.topic, err)
+	}
+	return nil
+}
+
+func (p *Producer) PublishDLQ(ctx context.Context, msg DLQMessage) error {
+	if msg.FailedAt == "" {
+		msg.FailedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal dlq message: %w", err)
+	}
+
+	err = p.writer.WriteMessages(ctx, kafka.Message{
+		Key:   []byte(msg.NotificationID),
+		Value: payload,
+		Time:  time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("publish to dlq topic %s: %w", p.topic, err)
 	}
 	return nil
 }

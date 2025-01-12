@@ -38,8 +38,11 @@ func main() {
 		}
 	}()
 
-	repo := repository.NewNotificationRepository(pool)
-	svc := service.NewNotificationService(repo, producer, nil)
+	svc := service.NewNotificationService(service.Deps{
+		Repo:     repository.NewNotificationRepository(pool),
+		Logs:     repository.NewDeliveryLogRepository(pool),
+		Producer: producer,
+	})
 	h := handler.NewNotificationHandler(svc)
 
 	srv := &http.Server{
