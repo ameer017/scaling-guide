@@ -18,4 +18,19 @@ func main() {
 
 	Surname := "Raji" // works only inside of a function
 	fmt.Println(Surname)
+
+
+	// Ints
+	var age int = 20
+	var age2 = 22
+	var age3 int
+
+	fmt.Println(age, age2, age3)
+
+	// Shorthand
+	Age := 20
+	fmt.Println(Age)
+
+
+	// bits and Memory
 }
