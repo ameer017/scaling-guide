@@ -10,8 +10,19 @@ func main() {
 	// 	x++
 	// }
 
-	for i := 0; i < 5; i++ {
-			fmt.Println("Value of i is:",i)
+	// for i := 0; i < 5; i++ {
+	// 		fmt.Println("Value of i is:",i)
 
+	// }
+
+	names := []string{"Raymond", "Reddington", "Zuma", "Elizabeth", "Tom"}
+	// for n := 0; n < len(names); n++ {
+	// 		fmt.Println(names[n])
+
+	// }
+
+	for index, name := range names {
+		fmt.Printf("The value at index %v is %v \n", index, name)
 	}
+
 }
