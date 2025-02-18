@@ -28,6 +28,11 @@ func main() {
 			continue
 		}
 
+		if index > 2 {
+			fmt.Println("Breaking at pos", index);
+			break;
+		}
+
 		fmt.Printf("The value at pos %v is %v \n", index, value)
 	}
 }
