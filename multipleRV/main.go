@@ -13,6 +13,11 @@ func getInitials(n string) (string, string) {
 	for _, v := range names {
 		initials = append(initials, v[:1])
 	}
+
+	if len(initials) > 1 {
+		return initials[0], initials[1]
+	}
+	return initials[0], "";
 }
 func main() {
 	getInitials("Raymon Reddignton")
