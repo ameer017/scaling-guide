@@ -17,8 +17,15 @@ func getInitials(n string) (string, string) {
 	if len(initials) > 1 {
 		return initials[0], initials[1]
 	}
-	return initials[0], "";
+	return initials[0], "_";
 }
 func main() {
-	getInitials("Raymon Reddignton")
+	fn1, sn1 := getInitials("Raymon Reddignton")
+	fmt.Println(fn1, sn1)
+
+	fn2, sn2 := getInitials("Elizabeth Keen")
+	fmt.Println(fn2, sn2)
+
+	fn3, sn3 := getInitials("Dembe ")
+	fmt.Println(fn3, sn3)
 }
