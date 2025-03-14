@@ -23,5 +23,10 @@ func NewRouter(notifications *NotificationHandler) http.Handler {
 		r.Get("/{id}/logs", notifications.ListDeliveryLogs)
 	})
 
+	r.Route("/templates", func(r chi.Router) {
+		r.Post("/", notifications.CreateTemplate)
+		r.Get("/", notifications.ListTemplates)
+	})
+
 	return r
 }

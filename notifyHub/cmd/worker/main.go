@@ -12,6 +12,7 @@ import (
 	"notifyHub/internal/email"
 	"notifyHub/internal/queue"
 	"notifyHub/internal/repository"
+	"notifyHub/internal/scheduler"
 	"notifyHub/internal/service"
 	"notifyHub/pkg/logger"
 )
@@ -56,8 +57,10 @@ func main() {
 		}
 	}()
 
+	notifRepo := repository.NewNotificationRepository(pool)
 	svc := service.NewNotificationService(service.Deps{
-		Repo:        repository.NewNotificationRepository(pool),
+		Repo:        notifRepo,
+		Templates:   repository.NewTemplateRepository(pool),
 		Logs:        repository.NewDeliveryLogRepository(pool),
 		Producer:    producer,
 		DLQ:         dlq,
@@ -66,6 +69,8 @@ func main() {
 		BackoffBase: cfg.RetryBackoff,
 		Provider:    "gmail-smtp",
 	})
+
+	go scheduler.New(notifRepo, producer, cfg.SchedulerInterval, 50, log).Run(ctx)
 
 	consumer := queue.NewConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, cfg.KafkaGroupID)
 	defer func() {
@@ -82,6 +87,7 @@ func main() {
 		"kafka_group_id", cfg.KafkaGroupID,
 		"max_attempts", cfg.MaxDeliveryAttempts,
 		"retry_backoff", cfg.RetryBackoff.String(),
+		"scheduler_interval", cfg.SchedulerInterval.String(),
 		"smtp_host", cfg.SMTPHost,
 		"smtp_from", firstNonEmpty(cfg.SMTPFrom, cfg.SMTPUsername),
 	)

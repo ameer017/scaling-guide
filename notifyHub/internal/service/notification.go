@@ -15,27 +15,29 @@ import (
 )
 
 const (
-	OutcomeSent             = "sent"
-	OutcomeRetryScheduled   = "retry_scheduled"
-	OutcomeFailedPermanent  = "failed_permanent"
-	OutcomeSkipped          = "skipped"
-	defaultEmailProvider    = "gmail-smtp"
-	maxBackoff              = 30 * time.Second
+	OutcomeSent            = "sent"
+	OutcomeRetryScheduled  = "retry_scheduled"
+	OutcomeFailedPermanent = "failed_permanent"
+	OutcomeSkipped         = "skipped"
+	defaultEmailProvider   = "gmail-smtp"
+	maxBackoff             = 30 * time.Second
 )
 
 type Deps struct {
-	Repo        *repository.NotificationRepository
-	Logs        *repository.DeliveryLogRepository
-	Producer    *queue.Producer
-	DLQ         *queue.Producer
-	Mailer      email.Mailer
-	MaxAttempts int
-	BackoffBase time.Duration
-	Provider    string
+	Repo         *repository.NotificationRepository
+	Templates    *repository.TemplateRepository
+	Logs         *repository.DeliveryLogRepository
+	Producer     *queue.Producer
+	DLQ          *queue.Producer
+	Mailer       email.Mailer
+	MaxAttempts  int
+	BackoffBase  time.Duration
+	Provider     string
 }
 
 type NotificationService struct {
 	repo        *repository.NotificationRepository
+	templates   *repository.TemplateRepository
 	logs        *repository.DeliveryLogRepository
 	producer    *queue.Producer
 	dlq         *queue.Producer
@@ -60,6 +62,7 @@ func NewNotificationService(d Deps) *NotificationService {
 	}
 	return &NotificationService{
 		repo:        d.Repo,
+		templates:   d.Templates,
 		logs:        d.Logs,
 		producer:    d.Producer,
 		dlq:         d.DLQ,
@@ -72,38 +75,116 @@ func NewNotificationService(d Deps) *NotificationService {
 
 func (s *NotificationService) Create(ctx context.Context, req models.CreateNotificationRequest) (*models.Notification, error) {
 	req.Recipient = strings.TrimSpace(req.Recipient)
-	req.Subject = strings.TrimSpace(req.Subject)
 	if req.Recipient == "" {
 		return nil, fmt.Errorf("%w: recipient is required", ErrInvalidInput)
 	}
-	if req.Subject == "" {
-		return nil, fmt.Errorf("%w: subject is required", ErrInvalidInput)
-	}
-	if strings.TrimSpace(req.Body) == "" {
-		return nil, fmt.Errorf("%w: body is required", ErrInvalidInput)
+
+	subject, body, err := s.resolveContent(ctx, req)
+	if err != nil {
+		return nil, err
 	}
 
 	now := time.Now().UTC()
+	status := models.StatusPending
+	var scheduledAt *time.Time
+
+	if req.ScheduledAt != nil {
+		at := req.ScheduledAt.UTC()
+		if at.After(now) {
+			status = models.StatusScheduled
+			scheduledAt = &at
+		}
+	}
+
 	n := &models.Notification{
-		ID:        uuid.NewString(),
-		Recipient: req.Recipient,
-		Subject:   req.Subject,
-		Body:      req.Body,
-		Status:    models.StatusPending,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          uuid.NewString(),
+		Recipient:   req.Recipient,
+		Subject:     subject,
+		Body:        body,
+		Status:      status,
+		ScheduledAt: scheduledAt,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	if err := s.repo.Create(ctx, n); err != nil {
 		return nil, err
 	}
 
-	// Persist first, then publish. If publish fails, the row stays PENDING for later recovery.
-	if err := s.producer.Publish(ctx, n.ID); err != nil {
-		return nil, fmt.Errorf("notification saved but kafka publish failed: %w", err)
+	// Future sends wait for the scheduler; immediate sends go to Kafka now.
+	if status == models.StatusPending {
+		if err := s.producer.Publish(ctx, n.ID); err != nil {
+			return nil, fmt.Errorf("notification saved but kafka publish failed: %w", err)
+		}
 	}
 
 	return n, nil
+}
+
+func (s *NotificationService) resolveContent(ctx context.Context, req models.CreateNotificationRequest) (subject, body string, err error) {
+	templateID := strings.TrimSpace(req.TemplateID)
+	if templateID != "" {
+		if s.templates == nil {
+			return "", "", fmt.Errorf("template repository is not configured")
+		}
+		t, getErr := s.templates.GetByID(ctx, templateID)
+		if getErr != nil {
+			if getErr == repository.ErrNotFound {
+				return "", "", fmt.Errorf("%w: template not found", ErrNotFound)
+			}
+			return "", "", getErr
+		}
+		subject = RenderTemplate(t.Subject, req.Variables)
+		body = RenderTemplate(t.Body, req.Variables)
+		return subject, body, nil
+	}
+
+	subject = strings.TrimSpace(req.Subject)
+	body = strings.TrimSpace(req.Body)
+	if subject == "" {
+		return "", "", fmt.Errorf("%w: subject is required (or provide template_id)", ErrInvalidInput)
+	}
+	if body == "" {
+		return "", "", fmt.Errorf("%w: body is required (or provide template_id)", ErrInvalidInput)
+	}
+	return subject, body, nil
+}
+
+func (s *NotificationService) CreateTemplate(ctx context.Context, req models.CreateTemplateRequest) (*models.Template, error) {
+	req.Name = strings.TrimSpace(req.Name)
+	req.Subject = strings.TrimSpace(req.Subject)
+	req.Body = strings.TrimSpace(req.Body)
+	if req.Name == "" {
+		return nil, fmt.Errorf("%w: name is required", ErrInvalidInput)
+	}
+	if req.Subject == "" {
+		return nil, fmt.Errorf("%w: subject is required", ErrInvalidInput)
+	}
+	if req.Body == "" {
+		return nil, fmt.Errorf("%w: body is required", ErrInvalidInput)
+	}
+	if s.templates == nil {
+		return nil, fmt.Errorf("template repository is not configured")
+	}
+
+	t := &models.Template{
+		ID:        uuid.NewString(),
+		Name:      req.Name,
+		Subject:   req.Subject,
+		Body:      req.Body,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.templates.Create(ctx, t); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+func (s *NotificationService) ListTemplates(ctx context.Context, limit int) ([]models.Template, error) {
+	if s.templates == nil {
+		return nil, fmt.Errorf("template repository is not configured")
+	}
+	return s.templates.List(ctx, limit)
 }
 
 func (s *NotificationService) Get(ctx context.Context, id string) (*models.Notification, error) {
@@ -129,9 +210,6 @@ func (s *NotificationService) ListDeliveryLogs(ctx context.Context, notification
 }
 
 // ProcessDelivery handles one Kafka delivery attempt.
-// On retryable failure it waits (exponential backoff), re-publishes to the send topic, and returns
-// OutcomeRetryScheduled so the worker can commit the current offset.
-// On permanent failure it marks FAILED, publishes to the DLQ, and returns OutcomeFailedPermanent.
 func (s *NotificationService) ProcessDelivery(ctx context.Context, notificationID string) (string, error) {
 	n, err := s.repo.GetByID(ctx, notificationID)
 	if err != nil {
@@ -142,10 +220,11 @@ func (s *NotificationService) ProcessDelivery(ctx context.Context, notificationI
 		return "", err
 	}
 
-	if n.Status == models.StatusSent {
+	if n.Status == models.StatusSent || n.Status == models.StatusFailed {
 		return OutcomeSkipped, nil
 	}
-	if n.Status == models.StatusFailed {
+	if n.Status == models.StatusScheduled {
+		// Not due yet — scheduler owns these. Skip if a message arrived early.
 		return OutcomeSkipped, nil
 	}
 

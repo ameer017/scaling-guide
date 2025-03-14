@@ -27,6 +27,7 @@ type Config struct {
 
 	MaxDeliveryAttempts int
 	RetryBackoff        time.Duration
+	SchedulerInterval   time.Duration
 }
 
 // Load reads configuration from environment variables with sensible local defaults.
@@ -52,6 +53,7 @@ func Load() Config {
 
 		MaxDeliveryAttempts: GetEnvInt("MAX_DELIVERY_ATTEMPTS", 3),
 		RetryBackoff:        time.Duration(GetEnvInt("RETRY_BACKOFF_SECONDS", 2)) * time.Second,
+		SchedulerInterval:   time.Duration(GetEnvInt("SCHEDULER_INTERVAL_SECONDS", 5)) * time.Second,
 	}
 }
 

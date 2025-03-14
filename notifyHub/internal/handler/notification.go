@@ -33,6 +33,10 @@ func (h *NotificationHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if errors.Is(err, service.ErrNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -72,6 +76,35 @@ func (h *NotificationHandler) ListDeliveryLogs(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusNotFound, "notification not found")
 			return
 		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *NotificationHandler) CreateTemplate(w http.ResponseWriter, r *http.Request) {
+	var req models.CreateTemplateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	t, err := h.svc.CreateTemplate(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, t)
+}
+
+func (h *NotificationHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := h.svc.ListTemplates(r.Context(), limit)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

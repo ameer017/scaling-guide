@@ -4,6 +4,7 @@ import "time"
 
 const (
 	StatusPending    = "PENDING"
+	StatusScheduled  = "SCHEDULED"
 	StatusProcessing = "PROCESSING"
 	StatusSent       = "SENT"
 	StatusFailed     = "FAILED"
@@ -23,8 +24,28 @@ type Notification struct {
 }
 
 // CreateNotificationRequest is the API payload to enqueue an email.
+// Provide subject+body, or template_id (+ optional variables).
 type CreateNotificationRequest struct {
-	Recipient string `json:"recipient"`
-	Subject   string `json:"subject"`
-	Body      string `json:"body"`
+	Recipient   string            `json:"recipient"`
+	Subject     string            `json:"subject,omitempty"`
+	Body        string            `json:"body,omitempty"`
+	TemplateID  string            `json:"template_id,omitempty"`
+	Variables   map[string]string `json:"variables,omitempty"`
+	ScheduledAt *time.Time        `json:"scheduled_at,omitempty"`
+}
+
+// Template is a reusable email subject/body with {{placeholders}}.
+type Template struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Subject   string    `json:"subject"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// CreateTemplateRequest is the API payload to create a template.
+type CreateTemplateRequest struct {
+	Name    string `json:"name"`
+	Subject string `json:"subject"`
+	Body    string `json:"body"`
 }

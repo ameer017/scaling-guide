@@ -60,7 +60,7 @@ notifyHub/
 | `recipient`    | Destination email address            |
 | `subject`      | Email subject                        |
 | `body`         | Email body (plain text or HTML)      |
-| `status`       | `PENDING` \| `SENT` \| `FAILED` \| … |
+| `status`       | `PENDING` \| `SCHEDULED` \| `SENT` \| `FAILED` \| … |
 | `scheduled_at` | When to send (null = send ASAP)      |
 | `sent_at`      | When delivery succeeded              |
 | `created_at`   | Created timestamp                    |
@@ -158,6 +158,29 @@ The worker sends mail over SMTP with STARTTLS.
 - After retries are exhausted, status becomes `FAILED` and a message is published to `notifications.dlq`.
 - Inspect attempts: `GET /notifications/{id}/logs`
 - Inspect DLQ: `make kafka-dlq`
+
+### Templates and scheduling
+
+- Create templates with `{{placeholders}}` via `POST /templates`.
+- Create notifications with `template_id` + `variables`, and/or `scheduled_at`.
+- Future sends are stored as `SCHEDULED`; the worker scheduler claims due rows and publishes them to Kafka.
+
+```bash
+# Create a template
+curl -s -X POST http://localhost:8080/templates \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"welcome","subject":"Hi {{name}}","body":"Welcome, {{name}}!"}'
+
+# Send from template (immediate)
+curl -s -X POST http://localhost:8080/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{"recipient":"you@example.com","template_id":"<id>","variables":{"name":"Ameer"}}'
+
+# Schedule for later (ISO-8601 UTC)
+curl -s -X POST http://localhost:8080/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{"recipient":"you@example.com","subject":"Later","body":"Hi","scheduled_at":"2026-08-04T12:00:00Z"}'
+```
 
 ## Future Enhancements
 

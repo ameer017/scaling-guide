@@ -39,9 +39,10 @@ func main() {
 	}()
 
 	svc := service.NewNotificationService(service.Deps{
-		Repo:     repository.NewNotificationRepository(pool),
-		Logs:     repository.NewDeliveryLogRepository(pool),
-		Producer: producer,
+		Repo:      repository.NewNotificationRepository(pool),
+		Templates: repository.NewTemplateRepository(pool),
+		Logs:      repository.NewDeliveryLogRepository(pool),
+		Producer:  producer,
 	})
 	h := handler.NewNotificationHandler(svc)
 

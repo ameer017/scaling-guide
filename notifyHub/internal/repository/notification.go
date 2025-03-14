@@ -33,11 +33,11 @@ func OpenPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 
 func (r *NotificationRepository) Create(ctx context.Context, n *models.Notification) error {
 	const q = `
-		INSERT INTO notifications (id, recipient, subject, body, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO notifications (id, recipient, subject, body, status, scheduled_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
 	_, err := r.pool.Exec(ctx, q,
-		n.ID, n.Recipient, n.Subject, n.Body, n.Status, n.CreatedAt, n.UpdatedAt,
+		n.ID, n.Recipient, n.Subject, n.Body, n.Status, n.ScheduledAt, n.CreatedAt, n.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert notification: %w", err)
@@ -103,6 +103,43 @@ func (r *NotificationRepository) UpdateStatus(ctx context.Context, id, status st
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ClaimDueScheduled moves due SCHEDULED rows to PENDING and returns their IDs.
+func (r *NotificationRepository) ClaimDueScheduled(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	const q = `
+		UPDATE notifications
+		SET status = $1, updated_at = NOW()
+		WHERE id IN (
+			SELECT id
+			FROM notifications
+			WHERE status = $2
+			  AND scheduled_at IS NOT NULL
+			  AND scheduled_at <= NOW()
+			ORDER BY scheduled_at ASC
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING id
+	`
+	rows, err := r.pool.Query(ctx, q, models.StatusPending, models.StatusScheduled, limit)
+	if err != nil {
+		return nil, fmt.Errorf("claim due scheduled: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 type scannable interface {
