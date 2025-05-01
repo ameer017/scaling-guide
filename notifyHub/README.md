@@ -161,13 +161,18 @@ Client → API → PostgreSQL (PENDING)
 6. Add templates and scheduled notifications.
 7. Write tests and add API documentation.
 
-## Local Development (planned)
+## Local Development
 
 ```bash
 # from notifyHub/
-docker compose up -d    # Postgres, Redis, Kafka, etc.
-make run-api            # start API
-make run-worker         # start worker
+cp .env.example .env    # optional; defaults already match compose
+
+make up                 # Postgres, Redis, Kafka + create notifications.send topic
+make kafka-topics       # should list notifications.send
+make run-api            # http://localhost:8080/health
+make run-worker         # idle stub until Kafka consumer is implemented
+
+make down               # stop infrastructure
 ```
 
-Exact Makefile targets and compose services will be added as the scaffold lands.
+Useful Kafka inspection targets: `make kafka-topics`, `make kafka-groups`.
