@@ -1,145 +1,167 @@
 # NotifyHub
 
-A standalone microservice for sending **email** notifications — built primarily as a hands-on project to **learn and understand Kafka**.
+A small Go microservice that sends **email** notifications asynchronously through **Kafka**.
 
-The service is the vehicle; Kafka is the focus. By building a real producer/consumer pipeline (API publishes jobs, a worker consumes them, retries and failure handling ride on top of Kafka), you'll get practical experience with topics, consumer groups, offsets, delivery guarantees, and how async messaging fits into a microservice.
+Built as a hands-on way to learn Kafka: produce jobs from an API, consume them in a worker, retry failures, and land permanent failures on a dead-letter topic.
 
-Emails are accepted over a REST API, persisted as `PENDING`, published to **Kafka**, and delivered asynchronously by a worker with retries, delivery logging, and optional scheduling/templates.
+## How it works
 
-## Tech Stack
+<p align="center">
+  <img src="docs/flow.svg" alt="NotifyHub flow: Client → API → Kafka → Worker → Email" width="720" />
+</p>
 
-| Area           | Choice                   |
-| -------------- | ------------------------ |
-| Language       | Go                       |
-| HTTP router    | Chi                      |
-| Database       | PostgreSQL               |
-| Cache          | Redis                    |
-| Message broker | **Kafka**                |
-| Containers     | Docker + Docker Compose  |
-| Auth           | JWT (service-to-service) |
-| Logging        | Zerolog or slog          |
-| Data access    | SQLC or GORM             |
-| API docs       | Swagger / OpenAPI        |
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant API
+    participant DB as Postgres
+    participant Kafka as Kafka (send)
+    participant Worker
+    participant SMTP as Gmail SMTP
+    participant DLQ as Kafka (dlq)
 
-## Suggested Folder Structure
-
-```text
-notifyHub/
-├── cmd/
-│   ├── api/                 # REST API entrypoint
-│   └── worker/              # Kafka consumer / delivery worker
-├── internal/
-│   ├── config/
-│   ├── handler/
-│   ├── service/
-│   ├── repository/
-│   ├── middleware/
-│   ├── models/
-│   ├── queue/               # Kafka producer / consumer wrappers
-│   ├── email/
-│   └── scheduler/
-├── pkg/
-│   ├── logger/
-│   └── validator/
-├── migrations/
-├── docs/                    # OpenAPI / Swagger
-├── Dockerfile
-├── docker-compose.yml
-├── Makefile
-├── go.mod
-└── README.md
+    Client->>API: POST /notifications
+    API->>DB: save PENDING or SCHEDULED
+    alt immediate send
+        API->>Kafka: publish notification_id
+    else scheduled for later
+        Note over API,DB: scheduler publishes when due
+        API-->>Kafka: (later) publish notification_id
+    end
+    Kafka->>Worker: consume
+    Worker->>DB: load notification
+    Worker->>SMTP: send email
+    alt success
+        Worker->>DB: SENT + delivery_logs
+    else retryable failure
+        Worker->>DB: log FAILURE
+        Worker->>Kafka: re-publish after backoff
+    else max attempts
+        Worker->>DB: FAILED
+        Worker->>DLQ: publish poison message
+    end
 ```
 
-## Database Design
+1. `POST /notifications` saves the email in Postgres.
+2. If send-now → publish the notification ID to `notifications.send`.
+3. If `scheduled_at` is in the future → status `SCHEDULED`; the worker scheduler publishes when due.
+4. The worker consumes the ID, loads the row, and sends via Gmail SMTP.
+5. Each attempt is written to `delivery_logs`. Retries use exponential backoff; after max attempts the job goes to `notifications.dlq`.
 
-### `notifications`
+## Stack
 
-| Column         | Description                          |
-| -------------- | ------------------------------------ |
-| `id`           | Primary key                          |
-| `recipient`    | Destination email address            |
-| `subject`      | Email subject                        |
-| `body`         | Email body (plain text or HTML)      |
-| `status`       | `PENDING` \| `SCHEDULED` \| `SENT` \| `FAILED` \| … |
-| `scheduled_at` | When to send (null = send ASAP)      |
-| `sent_at`      | When delivery succeeded              |
-| `created_at`   | Created timestamp                    |
-| `updated_at`   | Last update timestamp                |
+| Piece | Choice |
+| ----- | ------ |
+| Language | Go |
+| HTTP | Chi |
+| DB | PostgreSQL + pgx |
+| Broker | Kafka (KRaft, Docker) |
+| Email | Gmail SMTP |
+| Logging | slog |
+| Docs | OpenAPI (`docs/openapi.yaml`) |
+| Tooling | Docker Compose, Makefile |
 
-### `templates`
+Redis is included in Compose for later use; the app does not use it yet.
 
-| Column       | Description       |
-| ------------ | ----------------- |
-| `id`         | Primary key       |
-| `name`       | Template name     |
-| `subject`    | Subject template  |
-| `body`       | Body template     |
-| `created_at` | Created timestamp |
+## Quick start
 
-### `delivery_logs`
+```bash
+cd notifyHub
+cp .env.example .env
+# set SMTP_USERNAME / SMTP_PASSWORD / SMTP_FROM (Gmail App Password)
 
-| Column            | Description                                     |
-| ----------------- | ----------------------------------------------- |
-| `id`              | Primary key                                     |
-| `notification_id` | FK → `notifications`                            |
-| `provider`        | Provider used (e.g. Mailtrap, Resend, SendGrid) |
-| `response`        | Provider response / error payload               |
-| `status`          | Attempt outcome                                 |
-| `attempt`         | Attempt number                                  |
-| `created_at`      | Created timestamp                               |
-
-## API Endpoints
-
-| Method   | Path                  | Description                            |
-| -------- | --------------------- | -------------------------------------- |
-| `POST`   | `/notifications`      | Create / enqueue an email notification |
-| `GET`    | `/notifications/{id}` | Get one notification                   |
-| `GET`    | `/notifications/{id}/logs` | List delivery attempts            |
-| `GET`    | `/notifications`      | List notifications                     |
-| `DELETE` | `/notifications/{id}` | Cancel / delete a notification         |
-| `POST`   | `/templates`          | Create a template                      |
-| `GET`    | `/templates`          | List templates                         |
-| `GET`    | `/health`             | Health check                           |
-| `GET`    | `/metrics`            | Metrics                                |
-
-## Learning Goals (Kafka)
-
-This project is intentionally shaped around Kafka so you can practice:
-
-- Producing messages from the API after persisting a notification
-- Consuming with a worker (consumer groups, offsets, rebalancing)
-- Choosing topic design (e.g. `notifications.send`) and message payloads
-- Retries, backoff, and dead-letter topics when delivery fails
-- How Kafka sits between HTTP, Postgres, and side-effectful workers
-
-Email delivery is the domain; Kafka is what we're here to understand.
-
-## Queue Flow (Kafka)
-
-1. API receives an email notification request.
-2. Save it as `PENDING` in PostgreSQL.
-3. Publish the notification **ID** to a Kafka topic (e.g. `notifications.send`).
-4. Worker consumes the message from Kafka.
-5. Send the email via the configured provider.
-6. Update the notification status to `SENT` or `FAILED`.
-7. Retry failures with exponential backoff (and optional delayed re-publish to Kafka).
-8. Mark permanently failed after a configurable max number of attempts; write each attempt to `delivery_logs`.
-
-```text
-Client → API → PostgreSQL (PENDING)
-              → Kafka topic
-                    ↓
-                 Worker → Email provider → status SENT / FAILED
-                                         → delivery_logs
+make up
+make migrate
+make run-api      # terminal 1 → http://localhost:8080/health
+make run-worker   # terminal 2
 ```
 
-## Email Provider
+Send a test email:
 
-**Gmail SMTP** (Go equivalent of Nodemailer + Gmail):
+```bash
+curl -s -X POST http://localhost:8080/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{"recipient":"you@example.com","subject":"Hello","body":"From NotifyHub"}'
+```
 
-1. Enable 2-Step Verification on the Google account.
+Useful checks:
+
+```bash
+make kafka-topics          # notifications.send, notifications.dlq
+make kafka-describe-group  # consumer lag / offsets
+make kafka-dlq             # peek dead-letter messages
+make test
+```
+
+## API
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `GET` | `/health` | Health check |
+| `POST` | `/notifications` | Create / enqueue (or schedule) an email |
+| `GET` | `/notifications` | List notifications |
+| `GET` | `/notifications/{id}` | Get one notification |
+| `GET` | `/notifications/{id}/logs` | Delivery attempts |
+| `POST` | `/templates` | Create a template (`{{placeholders}}`) |
+| `GET` | `/templates` | List templates |
+
+Full schema: [docs/openapi.yaml](docs/openapi.yaml).
+
+### Create notification
+
+Immediate:
+
+```bash
+curl -s -X POST http://localhost:8080/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{"recipient":"you@example.com","subject":"Hi","body":"Hello"}'
+```
+
+From a template:
+
+```bash
+curl -s -X POST http://localhost:8080/templates \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"welcome","subject":"Hi {{name}}","body":"Welcome, {{name}}!"}'
+
+curl -s -X POST http://localhost:8080/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{"recipient":"you@example.com","template_id":"<id>","variables":{"name":"Ameer"}}'
+```
+
+Scheduled (ISO-8601 UTC):
+
+```bash
+curl -s -X POST http://localhost:8080/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{"recipient":"you@example.com","subject":"Later","body":"Hi","scheduled_at":"2026-08-04T12:00:00Z"}'
+```
+
+## Kafka topics
+
+| Topic | Purpose |
+| ----- | ------- |
+| `notifications.send` | Delivery jobs (payload: `{ "notification_id": "..." }`) |
+| `notifications.dlq` | Permanent failures / poison messages |
+
+Consumer group: `notifyhub-worker` (configurable).
+
+**Learning focus:** produce after persist, consume + manual offset commit, retries via re-publish, DLQ for terminal failures, inspect groups with `make kafka-describe-group`.
+
+## Data model
+
+**notifications** — `id`, `recipient`, `subject`, `body`, `status` (`PENDING` \| `SCHEDULED` \| `PROCESSING` \| `SENT` \| `FAILED`), `scheduled_at`, `sent_at`, timestamps.
+
+**templates** — `id`, `name` (unique), `subject`, `body`, `created_at`.
+
+**delivery_logs** — `id`, `notification_id`, `provider`, `response`, `status` (`SUCCESS` \| `FAILURE`), `attempt`, `created_at`.
+
+## Email (Gmail SMTP)
+
+1. Turn on 2-Step Verification.
 2. Create an [App Password](https://myaccount.google.com/apppasswords).
-3. Set these in `.env`:
+3. Put it in `.env`:
 
 ```bash
 SMTP_HOST=smtp.gmail.com
@@ -149,86 +171,45 @@ SMTP_PASSWORD=your-16-char-app-password
 SMTP_FROM=you@gmail.com
 ```
 
-The worker sends mail over SMTP with STARTTLS.
+Retries: `MAX_DELIVERY_ATTEMPTS` (default 3), `RETRY_BACKOFF_SECONDS` (default 2 → 2s, 4s, 8s…).  
+Scheduler poll: `SCHEDULER_INTERVAL_SECONDS` (default 5).
 
-### Retries, delivery logs, and DLQ
+## Layout
 
-- Each send attempt is written to `delivery_logs` (`SUCCESS` / `FAILURE`).
-- Failed attempts retry with exponential backoff (`RETRY_BACKOFF_SECONDS`, default 2s → 2s, 4s, 8s…) up to `MAX_DELIVERY_ATTEMPTS` (default 3).
-- After retries are exhausted, status becomes `FAILED` and a message is published to `notifications.dlq`.
-- Inspect attempts: `GET /notifications/{id}/logs`
-- Inspect DLQ: `make kafka-dlq`
-
-### Templates and scheduling
-
-- Create templates with `{{placeholders}}` via `POST /templates`.
-- Create notifications with `template_id` + `variables`, and/or `scheduled_at`.
-- Future sends are stored as `SCHEDULED`; the worker scheduler claims due rows and publishes them to Kafka.
-
-```bash
-# Create a template
-curl -s -X POST http://localhost:8080/templates \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"welcome","subject":"Hi {{name}}","body":"Welcome, {{name}}!"}'
-
-# Send from template (immediate)
-curl -s -X POST http://localhost:8080/notifications \
-  -H 'Content-Type: application/json' \
-  -d '{"recipient":"you@example.com","template_id":"<id>","variables":{"name":"Ameer"}}'
-
-# Schedule for later (ISO-8601 UTC)
-curl -s -X POST http://localhost:8080/notifications \
-  -H 'Content-Type: application/json' \
-  -d '{"recipient":"you@example.com","subject":"Later","body":"Hi","scheduled_at":"2026-08-04T12:00:00Z"}'
+```text
+notifyHub/
+├── cmd/api/            # HTTP API
+├── cmd/worker/         # Kafka consumer + scheduler
+├── internal/
+│   ├── config/
+│   ├── handler/
+│   ├── service/
+│   ├── repository/
+│   ├── models/
+│   ├── queue/          # Kafka producer / consumer
+│   ├── email/          # Gmail SMTP
+│   └── scheduler/      # due SCHEDULED → Kafka
+├── pkg/logger/
+├── migrations/
+├── docs/openapi.yaml
+├── docker-compose.yml
+└── Makefile
 ```
 
-## Future Enhancements
+## What we built (MVP)
 
-- SMS and push channels
-- Webhooks for delivery updates
-- User notification preferences
-- Rate limiting per recipient
-- Batch notifications
-- Dead-letter topic (Kafka DLQ) — **done** (`notifications.dlq`)
-- Multi-tenancy
-- Event sourcing
-- gRPC API
-- Kubernetes deployment
-- Prometheus metrics
-- OpenTelemetry tracing
+1. Local stack: Postgres, Kafka, Redis (Compose)
+2. REST API to create and query notifications
+3. Kafka produce / consume pipeline
+4. Real email via Gmail SMTP
+5. Retries, delivery logs, DLQ
+6. Templates + scheduled sends
+7. Tests + OpenAPI docs
 
-## Development Plan
+## Possible next steps
 
-1. Set up the Go project, Docker, PostgreSQL, Kafka, and Redis — get comfortable inspecting topics and consumer groups locally.
-2. Build the REST API to create and query notifications.
-3. Implement Kafka publishing and a worker to consume jobs (core learning step).
-4. Integrate an email provider and send real emails.
-5. Add retries, logging, delivery tracking, and a dead-letter topic.
-6. Add templates and scheduled notifications.
-7. Write tests and add API documentation.
-
-## Local Development
-
-```bash
-# from notifyHub/
-cp .env.example .env    # optional; defaults already match compose
-
-make up                 # Postgres, Redis, Kafka + create notifications.send topic
-make migrate            # create notifications table
-make kafka-topics       # should list notifications.send
-
-make run-api            # http://localhost:8080/health
-make run-worker         # consumes notifications.send and sends via Gmail SMTP
-
-# Enqueue a notification (API persists PENDING, then publishes ID to Kafka)
-curl -s -X POST http://localhost:8080/notifications \
-  -H 'Content-Type: application/json' \
-  -d '{"recipient":"you@example.com","subject":"Hello","body":"Kafka learning"}'
-
-# Inspect consumer group lag / offsets
-make kafka-describe-group
-
-make down               # stop infrastructure
-```
-
-Useful Kafka targets: `make kafka-topics`, `make kafka-groups`, `make kafka-describe-group`.
+- JWT auth, rate limiting, webhooks
+- Use Redis (idempotency / rate limits)
+- SMS / push channels
+- Prometheus metrics, OpenTelemetry
+- Kubernetes deploy

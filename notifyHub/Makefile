@@ -1,4 +1,4 @@
-.PHONY: up down logs ps migrate kafka-topics kafka-groups kafka-describe-group kafka-dlq run-api run-worker tidy
+.PHONY: up down logs ps migrate kafka-topics kafka-groups kafka-describe-group kafka-dlq run-api run-worker test tidy
 
 up:
 	docker compose up -d
@@ -45,6 +45,9 @@ run-api:
 
 run-worker:
 	go run ./cmd/worker
+
+test:
+	go test ./...
 
 tidy:
 	go mod tidy

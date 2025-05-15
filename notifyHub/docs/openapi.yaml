@@ -1,0 +1,311 @@
+openapi: 3.0.3
+info:
+  title: NotifyHub API
+  description: |
+    Email notification microservice. Notifications are persisted, published to Kafka,
+    and delivered asynchronously by a worker (with retries, delivery logs, and a DLQ).
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: health
+  - name: notifications
+  - name: templates
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                    example: notifyhub-api
+
+  /notifications:
+    get:
+      tags: [notifications]
+      summary: List notifications
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+      responses:
+        "200":
+          description: Notification list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Notification"
+    post:
+      tags: [notifications]
+      summary: Create / enqueue a notification
+      description: |
+        Provide `subject`+`body`, or `template_id` with optional `variables`.
+        Set `scheduled_at` (future RFC3339) to store as SCHEDULED until the worker scheduler publishes it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNotificationRequest"
+            examples:
+              immediate:
+                value:
+                  recipient: you@example.com
+                  subject: Hello
+                  body: Kafka learning
+              from_template:
+                value:
+                  recipient: you@example.com
+                  template_id: 11111111-1111-1111-1111-111111111111
+                  variables:
+                    name: Ameer
+              scheduled:
+                value:
+                  recipient: you@example.com
+                  subject: Later
+                  body: Hi
+                  scheduled_at: "2026-08-04T12:00:00Z"
+      responses:
+        "202":
+          description: Accepted (PENDING or SCHEDULED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notification"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /notifications/{id}:
+    get:
+      tags: [notifications]
+      summary: Get one notification
+      parameters:
+        - $ref: "#/components/parameters/NotificationId"
+      responses:
+        "200":
+          description: Notification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notification"
+        "404":
+          $ref: "#/components/responses/Error"
+
+  /notifications/{id}/logs:
+    get:
+      tags: [notifications]
+      summary: List delivery attempts
+      parameters:
+        - $ref: "#/components/parameters/NotificationId"
+      responses:
+        "200":
+          description: Delivery logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DeliveryLog"
+        "404":
+          $ref: "#/components/responses/Error"
+
+  /templates:
+    get:
+      tags: [templates]
+      summary: List templates
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+      responses:
+        "200":
+          description: Template list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Template"
+    post:
+      tags: [templates]
+      summary: Create a template
+      description: Subject/body may include `{{placeholders}}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTemplateRequest"
+            example:
+              name: welcome
+              subject: "Hi {{name}}"
+              body: "Welcome, {{name}}!"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+        "400":
+          $ref: "#/components/responses/Error"
+
+components:
+  parameters:
+    NotificationId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+
+  schemas:
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        recipient:
+          type: string
+          format: email
+        subject:
+          type: string
+        body:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, SCHEDULED, PROCESSING, SENT, FAILED]
+        scheduled_at:
+          type: string
+          format: date-time
+          nullable: true
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateNotificationRequest:
+      type: object
+      required: [recipient]
+      properties:
+        recipient:
+          type: string
+          format: email
+        subject:
+          type: string
+        body:
+          type: string
+        template_id:
+          type: string
+          format: uuid
+        variables:
+          type: object
+          additionalProperties:
+            type: string
+        scheduled_at:
+          type: string
+          format: date-time
+
+    DeliveryLog:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        notification_id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+          example: gmail-smtp
+        response:
+          type: string
+        status:
+          type: string
+          enum: [SUCCESS, FAILURE]
+        attempt:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    Template:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        subject:
+          type: string
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CreateTemplateRequest:
+      type: object
+      required: [name, subject, body]
+      properties:
+        name:
+          type: string
+        subject:
+          type: string
+        body:
+          type: string

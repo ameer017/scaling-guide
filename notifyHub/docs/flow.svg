@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="160" viewBox="0 0 720 160" role="img" aria-label="NotifyHub message flow animation">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <style>
+      .label { font: 600 12px ui-sans-serif, system-ui, sans-serif; fill: #e2e8f0; }
+      .sub { font: 500 10px ui-sans-serif, system-ui, sans-serif; fill: #94a3b8; }
+      .box { fill: #334155; stroke: #64748b; stroke-width: 1.5; rx: 10; }
+      .wire { stroke: #475569; stroke-width: 2; fill: none; }
+      .packet {
+        offset-path: path('M 95 70 H 625');
+        offset-rotate: 0deg;
+        animation: travel 4.5s ease-in-out infinite;
+      }
+      @keyframes travel {
+        0%   { offset-distance: 0%;   opacity: 0; }
+        8%   { opacity: 1; }
+        92%  { opacity: 1; }
+        100% { offset-distance: 100%; opacity: 0; }
+      }
+      .pulse {
+        animation: pulse 4.5s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 0.35; }
+        50% { opacity: 1; }
+      }
+    </style>
+  </defs>
+
+  <rect width="720" height="160" rx="16" fill="url(#bg)"/>
+
+  <!-- track -->
+  <path class="wire" d="M 95 70 H 625"/>
+  <circle class="pulse" cx="95" cy="70" r="3" fill="#38bdf8"/>
+  <circle class="pulse" cx="230" cy="70" r="3" fill="#38bdf8" style="animation-delay:0.7s"/>
+  <circle class="pulse" cx="365" cy="70" r="3" fill="#38bdf8" style="animation-delay:1.4s"/>
+  <circle class="pulse" cx="500" cy="70" r="3" fill="#38bdf8" style="animation-delay:2.1s"/>
+  <circle class="pulse" cx="625" cy="70" r="3" fill="#38bdf8" style="animation-delay:2.8s"/>
+
+  <!-- nodes -->
+  <rect class="box" x="40" y="48" width="70" height="44"/>
+  <text class="label" x="75" y="68" text-anchor="middle">Client</text>
+  <text class="sub" x="75" y="82" text-anchor="middle">HTTP</text>
+
+  <rect class="box" x="175" y="48" width="70" height="44"/>
+  <text class="label" x="210" y="68" text-anchor="middle">API</text>
+  <text class="sub" x="210" y="82" text-anchor="middle">Chi</text>
+
+  <rect class="box" x="310" y="48" width="90" height="44"/>
+  <text class="label" x="355" y="68" text-anchor="middle">Kafka</text>
+  <text class="sub" x="355" y="82" text-anchor="middle">send topic</text>
+
+  <rect class="box" x="450" y="48" width="80" height="44"/>
+  <text class="label" x="490" y="68" text-anchor="middle">Worker</text>
+  <text class="sub" x="490" y="82" text-anchor="middle">consumer</text>
+
+  <rect class="box" x="580" y="48" width="90" height="44"/>
+  <text class="label" x="625" y="68" text-anchor="middle">Email</text>
+  <text class="sub" x="625" y="82" text-anchor="middle">Gmail SMTP</text>
+
+  <!-- moving packet -->
+  <g class="packet">
+    <rect x="-14" y="-8" width="28" height="16" rx="4" fill="#38bdf8"/>
+    <text x="0" y="3" text-anchor="middle" font-size="8" font-family="ui-sans-serif,system-ui,sans-serif" font-weight="700" fill="#0f172a">ID</text>
+  </g>
+
+  <text class="sub" x="360" y="130" text-anchor="middle">notification ID travels: API ’ Kafka ’ Worker ’ Email</text>
+  <text class="sub" x="360" y="146" text-anchor="middle">retries &amp; DLQ keep failed deliveries observable</text>
+</svg>
