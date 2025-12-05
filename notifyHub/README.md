@@ -168,11 +168,21 @@ Client → API → PostgreSQL (PENDING)
 cp .env.example .env    # optional; defaults already match compose
 
 make up                 # Postgres, Redis, Kafka + create notifications.send topic
+make migrate            # create notifications table
 make kafka-topics       # should list notifications.send
+
 make run-api            # http://localhost:8080/health
-make run-worker         # idle stub until Kafka consumer is implemented
+make run-worker         # consumes notifications.send and marks SENT (email stub)
+
+# Enqueue a notification (API persists PENDING, then publishes ID to Kafka)
+curl -s -X POST http://localhost:8080/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{"recipient":"you@example.com","subject":"Hello","body":"Kafka learning"}'
+
+# Inspect consumer group lag / offsets
+make kafka-describe-group
 
 make down               # stop infrastructure
 ```
 
-Useful Kafka inspection targets: `make kafka-topics`, `make kafka-groups`.
+Useful Kafka targets: `make kafka-topics`, `make kafka-groups`, `make kafka-describe-group`.

@@ -10,6 +10,10 @@ import (
 	"time"
 
 	"notifyHub/internal/config"
+	"notifyHub/internal/handler"
+	"notifyHub/internal/queue"
+	"notifyHub/internal/repository"
+	"notifyHub/internal/service"
 	"notifyHub/pkg/logger"
 )
 
@@ -17,15 +21,30 @@ func main() {
 	cfg := config.Load()
 	log := logger.New(cfg.AppEnv)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","service":"notifyhub-api"}`))
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := repository.OpenPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Error("database connection failed", "error", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	producer := queue.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
+	defer func() {
+		if err := producer.Close(); err != nil {
+			log.Error("kafka producer close failed", "error", err)
+		}
+	}()
+
+	repo := repository.NewNotificationRepository(pool)
+	svc := service.NewNotificationService(repo, producer)
+	h := handler.NewNotificationHandler(svc)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.HTTPPort,
-		Handler:           mux,
+		Handler:           handler.NewRouter(h),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -46,10 +65,10 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error("api shutdown error", "error", err)
 		os.Exit(1)
 	}
