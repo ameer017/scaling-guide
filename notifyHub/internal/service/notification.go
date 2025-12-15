@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"notifyHub/internal/email"
 	"notifyHub/internal/models"
 	"notifyHub/internal/queue"
 	"notifyHub/internal/repository"
@@ -16,10 +17,15 @@ import (
 type NotificationService struct {
 	repo     *repository.NotificationRepository
 	producer *queue.Producer
+	mailer   email.Mailer
 }
 
-func NewNotificationService(repo *repository.NotificationRepository, producer *queue.Producer) *NotificationService {
-	return &NotificationService{repo: repo, producer: producer}
+func NewNotificationService(
+	repo *repository.NotificationRepository,
+	producer *queue.Producer,
+	mailer email.Mailer,
+) *NotificationService {
+	return &NotificationService{repo: repo, producer: producer, mailer: mailer}
 }
 
 func (s *NotificationService) Create(ctx context.Context, req models.CreateNotificationRequest) (*models.Notification, error) {
@@ -74,7 +80,6 @@ func (s *NotificationService) List(ctx context.Context, limit int) ([]models.Not
 }
 
 // ProcessDelivery is called by the worker after consuming a Kafka message.
-// Email sending is intentionally stubbed until the email-provider step.
 func (s *NotificationService) ProcessDelivery(ctx context.Context, notificationID string) error {
 	n, err := s.repo.GetByID(ctx, notificationID)
 	if err != nil {
@@ -89,11 +94,21 @@ func (s *NotificationService) ProcessDelivery(ctx context.Context, notificationI
 		return nil
 	}
 
+	if s.mailer == nil {
+		return fmt.Errorf("mailer is not configured")
+	}
+
 	if err := s.repo.UpdateStatus(ctx, n.ID, models.StatusProcessing, nil); err != nil {
 		return err
 	}
 
-	// TODO(step 4): call email provider with n.Recipient / Subject / Body.
+	if err := s.mailer.Send(ctx, n.Recipient, n.Subject, n.Body); err != nil {
+		if updErr := s.repo.UpdateStatus(ctx, n.ID, models.StatusFailed, nil); updErr != nil {
+			return fmt.Errorf("email send failed (%v) and status update failed: %w", err, updErr)
+		}
+		return fmt.Errorf("%w: %v", ErrDeliveryFailed, err)
+	}
+
 	now := time.Now().UTC()
 	if err := s.repo.UpdateStatus(ctx, n.ID, models.StatusSent, &now); err != nil {
 		return err

@@ -39,7 +39,7 @@ func main() {
 	}()
 
 	repo := repository.NewNotificationRepository(pool)
-	svc := service.NewNotificationService(repo, producer)
+	svc := service.NewNotificationService(repo, producer, nil)
 	h := handler.NewNotificationHandler(svc)
 
 	srv := &http.Server{

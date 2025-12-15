@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"strconv"
+
+	"github.com/joho/godotenv"
 )
 
 // Config holds runtime settings loaded from the environment.
@@ -14,10 +16,19 @@ type Config struct {
 	KafkaBrokers string
 	KafkaTopic   string
 	KafkaGroupID string
+
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
 }
 
 // Load reads configuration from environment variables with sensible local defaults.
+// A local .env file is loaded when present (does not override existing env vars).
 func Load() Config {
+	_ = godotenv.Load()
+
 	return Config{
 		AppEnv:       getEnv("APP_ENV", "development"),
 		HTTPPort:     getEnv("HTTP_PORT", "8080"),
@@ -26,6 +37,12 @@ func Load() Config {
 		KafkaBrokers: getEnv("KAFKA_BROKERS", "localhost:9092"),
 		KafkaTopic:   getEnv("KAFKA_TOPIC", "notifications.send"),
 		KafkaGroupID: getEnv("KAFKA_GROUP_ID", "notifyhub-worker"),
+
+		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
+		SMTPPort:     getEnv("SMTP_PORT", "587"),
+		SMTPUsername: getEnv("SMTP_USERNAME", ""),
+		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:     getEnv("SMTP_FROM", ""),
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"notifyHub/internal/config"
+	"notifyHub/internal/email"
 	"notifyHub/internal/queue"
 	"notifyHub/internal/repository"
 	"notifyHub/internal/service"
@@ -29,9 +30,20 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Worker only needs the repo for status updates; producer is unused.
+	mailer, err := email.NewSMTPSender(email.SMTPConfig{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+		From:     cfg.SMTPFrom,
+	})
+	if err != nil {
+		log.Error("smtp mailer config invalid", "error", err)
+		os.Exit(1)
+	}
+
 	repo := repository.NewNotificationRepository(pool)
-	svc := service.NewNotificationService(repo, nil)
+	svc := service.NewNotificationService(repo, nil, mailer)
 
 	consumer := queue.NewConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, cfg.KafkaGroupID)
 	defer func() {
@@ -45,6 +57,8 @@ func main() {
 		"kafka_brokers", cfg.KafkaBrokers,
 		"kafka_topic", cfg.KafkaTopic,
 		"kafka_group_id", cfg.KafkaGroupID,
+		"smtp_host", cfg.SMTPHost,
+		"smtp_from", firstNonEmpty(cfg.SMTPFrom, cfg.SMTPUsername),
 	)
 
 	for {
@@ -66,11 +80,18 @@ func main() {
 		)
 
 		if err := svc.ProcessDelivery(ctx, payload.NotificationID); err != nil {
-			if errors.Is(err, service.ErrNotFound) {
+			switch {
+			case errors.Is(err, service.ErrNotFound):
 				log.Warn("notification missing; committing offset to skip poison message",
 					"notification_id", payload.NotificationID,
 				)
-			} else {
+			case errors.Is(err, service.ErrDeliveryFailed):
+				// Marked FAILED in DB; commit so we don't loop forever (retries come in step 5).
+				log.Error("email delivery failed; marked FAILED",
+					"notification_id", payload.NotificationID,
+					"error", err,
+				)
+			default:
 				log.Error("process delivery failed; will not commit offset",
 					"notification_id", payload.NotificationID,
 					"error", err,
@@ -79,7 +100,7 @@ func main() {
 				continue
 			}
 		} else {
-			log.Info("notification marked SENT (email stub)",
+			log.Info("notification emailed and marked SENT",
 				"notification_id", payload.NotificationID,
 			)
 		}
@@ -88,4 +109,13 @@ func main() {
 			log.Error("kafka commit failed", "error", err, "offset", msg.Offset)
 		}
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

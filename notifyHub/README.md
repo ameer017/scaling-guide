@@ -134,7 +134,21 @@ Client → API → PostgreSQL (PENDING)
 
 ## Email Provider
 
-- **SendByte**
+**Gmail SMTP** (Go equivalent of Nodemailer + Gmail):
+
+1. Enable 2-Step Verification on the Google account.
+2. Create an [App Password](https://myaccount.google.com/apppasswords).
+3. Set these in `.env`:
+
+```bash
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=you@gmail.com
+SMTP_PASSWORD=your-16-char-app-password
+SMTP_FROM=you@gmail.com
+```
+
+The worker sends mail over SMTP with STARTTLS. Failed sends mark the notification `FAILED` (retries come in step 5).
 
 ## Future Enhancements
 
@@ -172,7 +186,7 @@ make migrate            # create notifications table
 make kafka-topics       # should list notifications.send
 
 make run-api            # http://localhost:8080/health
-make run-worker         # consumes notifications.send and marks SENT (email stub)
+make run-worker         # consumes notifications.send and sends via Gmail SMTP
 
 # Enqueue a notification (API persists PENDING, then publishes ID to Kafka)
 curl -s -X POST http://localhost:8080/notifications \
